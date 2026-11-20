@@ -59,15 +59,14 @@ class Bot:
         act = {"tick": obs["tick"]}
         if obs["offer"]:
             ch = [c["id"] for c in obs["offer"]["choices"]]
+            order = ["plating", "armor", "nanites", "servos", "gun_damage", "laser_damage", "gun_mag",
+                     "capacitor", "jets", "gyros", "gun_rate", "lightning_efficiency", "reactor"]
             pick = 0
-            for pref in ("armor", "max_hp", "hp", "regen", "speed"):
-                for i, c in enumerate(ch):
-                    if pref in c:
-                        pick = i
-                        break
-                else:
-                    continue
-                break
+            bestr = 99
+            for i, c in enumerate(ch):
+                r = order.index(c) if c in order else 50
+                if r < bestr:
+                    bestr, pick = r, i
             act["pick"] = pick
 
         zone = obs["zone"]
@@ -106,6 +105,14 @@ class Bot:
             if d < 50:
                 vx += (x - n["pos"][0]) / max(d, 1) * 0.5
                 vy += (y - n["pos"][1]) / max(d, 1) * 0.5
+        # strafe around the nearest threat so shots miss
+        if mechs and mechs[0]["_d"] < 110:
+            m0 = mechs[0]
+            ex, ey = x - m0["pos"][0], y - m0["pos"][1]
+            en = math.hypot(ex, ey) or 1
+            sgn = 1 if (obs["tick"] // 18) % 2 == 0 else -1
+            vx += -ey / en * sgn * 0.9
+            vy += ex / en * sgn * 0.9
         # incoming sounds: step away from heard fire
         for s in obs["sounds"]:
             if s["kind"] in ("gun", "laser", "mortar", "explosion", "lightning") and s["dist"] != "far":
@@ -120,8 +127,8 @@ class Bot:
             along = -(px * ux + py * uy)
             if 0 < along < 60 and abs(px * uy - py * ux) < 8:
                 side = 1 if (px * uy - py * ux) > 0 else -1
-                vx += -uy * side * 1.5 * -1
-                vy += ux * side * 1.5 * -1
+                vx += -uy * side * 1.5
+                vy += ux * side * 1.5
         # nearby wanted loot when calm
         if not danger:
             want = me["weapons"][1] is None
@@ -181,7 +188,9 @@ class Bot:
         mx, my = math.cos(best_a), math.sin(best_a)
         self.last_move = (mx, my)
         stuck = math.hypot(me["vel"][0], me["vel"][1]) < 1.5 and obs["tick"] > 20
-        act["move"] = [mx, my]
+        calm = (not danger) and me["in_zone"] and dz < tgt_r * 1.3 and not obs["sounds"]
+        spd = 0.4 if calm else 1.0  # < step_speed: silent
+        act["move"] = [mx * spd, my * spd]
         out = not me["in_zone"]
         act["boost"] = bool((out or (danger and mechs and mechs[0]["_d"] < 70)) and me["energy"] > 25 and not stuck)
         if stuck and me["grounded"] and obs["tick"] % 6 == 0:
