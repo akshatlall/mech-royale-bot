@@ -49,6 +49,8 @@ class Bot:
         s = 0.0
         while s < dist:
             s += 3.0
+            if s > dist:
+                break
             if self.blocked(x + dx * s, y + dy * s):
                 return s - 3.0
         return dist
@@ -93,9 +95,26 @@ class Bot:
             vx += dzx / dz * k
             vy += dzy / dz * k
         danger = False
-        for m in mechs:
-            d = m["_d"]
-            if d < 130:
+        threats = [m for m in mechs if m["_d"] < 130]
+        hpf = me["hp"] / me["max_hp"]
+        engage = False
+        if len(threats) == 1:
+            e = threats[0]
+            ehp = e.get("hp", 1400)
+            engage = hpf > 0.4 and (ehp < me["hp"] * 1.3 or hpf > 0.8)
+        self.engage = engage
+        if engage:
+            danger = True
+            e = threats[0]
+            d = e["_d"]
+            kinds = [w["kind"] for w in me["weapons"] if w]
+            want = 28 if "lightning" in kinds else (60 if "laser" in kinds else 48)
+            rad = max(-1.0, min(1.0, (d - want) / want))
+            vx += (e["pos"][0] - x) / max(d, 1) * rad * 1.3
+            vy += (e["pos"][1] - y) / max(d, 1) * rad * 1.3
+        else:
+            for m in threats:
+                d = m["_d"]
                 danger = True
                 w = (130 - d) / 130 * 1.6
                 vx += (x - m["pos"][0]) / max(d, 1) * w
@@ -192,7 +211,7 @@ class Bot:
         spd = 0.4 if calm else 1.0  # < step_speed: silent
         act["move"] = [mx * spd, my * spd]
         out = not me["in_zone"]
-        act["boost"] = bool((out or (danger and mechs and mechs[0]["_d"] < 70)) and me["energy"] > 25 and not stuck)
+        act["boost"] = bool((out or (danger and not engage and mechs and mechs[0]["_d"] < 70)) and me["energy"] > 25 and not stuck)
         if stuck and me["grounded"] and obs["tick"] % 6 == 0:
             act["jump"] = True
 
@@ -218,17 +237,18 @@ class Bot:
             yaw = math.atan2(py - y, px - x)
             dd = math.hypot(px - x, py - y)
             pitch = math.atan2((tz + 4.5) - (z + 7), dd)
+            los = self.clear_dist(x, y, math.cos(yaw), math.sin(yaw), min(dd, 200.0)) >= min(dd, 200.0) - 3
             diff = abs((yaw - me["aim"][0] + math.pi) % (2 * math.pi) - math.pi)
             for i, w in enumerate(me["weapons"]):
                 if not w:
                     continue
                 k = w["kind"]
                 if k == "gun":
-                    fire[i] = dd < 190 and diff < 0.25 and w.get("ammo", 1) > 0
+                    fire[i] = dd < 190 and diff < max(0.04, min(0.25, 2.2 / max(dd, 1))) and w.get("ammo", 1) > 0 and los
                 elif k == "lightning":
-                    fire[i] = dd < 42 and me["energy"] > 8
+                    fire[i] = dd < 42 and me["energy"] > 8 and los
                 elif k == "laser":
-                    fire[i] = dd < 200 and diff < 0.3
+                    fire[i] = dd < 200 and diff < max(0.03, min(0.2, 2.0 / max(dd, 1))) and los
                 elif k == "mortar":
                     g = self.cfg["weapons"]["mortar"]["gravity"]
                     v = self.cfg["weapons"]["mortar"]["speed"]
